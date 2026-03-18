@@ -1,5 +1,6 @@
 use heck::ToPascalCase;
 use proc_macro::TokenStream as TS1;
+use syn::{LitStr, Token, parse::Parse, parse::ParseStream};
 
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -8,9 +9,10 @@ use syn::{
     TypeGenerics, Visibility, WhereClause, parse_macro_input, parse_quote,
 };
 #[proc_macro_attribute]
-pub fn ironcmd(_args: TS1, input: TS1) -> TS1 {
-    let func = parse_macro_input!(input as ItemFn);
-    let ops = OperationIronStruct::new(func);
+pub fn ironcmd(args: TS1, func: TS1) -> TS1 {
+    let args = parse_macro_input!(args as IronCmdArgs);
+    let func = parse_macro_input!(func as ItemFn);
+    let ops = OperationIronStruct::new(func, args);
     let generated = match ops.is_async {
         true => build_async_cmd(&ops),
         false => build_sync_cmd(&ops),
@@ -18,7 +20,50 @@ pub fn ironcmd(_args: TS1, input: TS1) -> TS1 {
     quote! {#generated}.into()
 }
 
+struct IronCmdArgs {
+    is_result: bool,
+    recursive_rollback: bool,
+    rename: Option<String>,
+}
+
+impl Parse for IronCmdArgs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut is_result = false;
+        let mut recursive_rollback = false;
+        let mut rename = None;
+
+        while !input.is_empty() {
+            let ident: Ident = input.parse()?;
+            match ident.to_string().as_str() {
+                "result" => is_result = true,
+                "recursive_rollback" => recursive_rollback = true,
+                "rename" => {
+                    input.parse::<Token![=]>()?;
+                    let s: LitStr = input.parse()?;
+                    rename = Some(s.value());
+                }
+                unknown => {
+                    return Err(syn::Error::new(
+                        ident.span(),
+                        format!("unknown ironcmd argument `{unknown}`"),
+                    ));
+                }
+            }
+            if input.peek(Token![,]) {
+                input.parse::<Token![,]>()?;
+            }
+        }
+        Ok(IronCmdArgs {
+            is_result,
+            recursive_rollback,
+            rename,
+        })
+    }
+}
+
 struct OperationIronStruct {
+    is_result: bool,
+    recursive_rollback: bool,
     s_name: Ident,
     vis: Visibility,
     generics: Generics,
@@ -30,7 +75,7 @@ struct OperationIronStruct {
     is_async: bool,
 }
 impl OperationIronStruct {
-    pub fn new(func: ItemFn) -> Self {
+    pub fn new(func: ItemFn, args: IronCmdArgs) -> Self {
         let sig = func.sig;
         let pats_types = sig
             .inputs
@@ -48,13 +93,15 @@ impl OperationIronStruct {
             ReturnType::Type(_, ty) => *ty,
             ReturnType::Default => parse_quote!(()),
         };
-        let original_idnt = sig.ident;
-        let idnt = Ident::new(
-            &original_idnt.to_string().to_pascal_case(),
-            original_idnt.span(),
-        );
+        let org_idnt = sig.ident;
+        let name_str = args
+            .rename
+            .unwrap_or_else(|| org_idnt.to_string().to_pascal_case());
+        let idnt = Ident::new(&name_str, org_idnt.span());
         Self {
-            s_name: idnt,
+            s_name: idnt, // struct name and Ident
+            is_result: args.is_result,
+            recursive_rollback: args.recursive_rollback,
             vis: func.vis,
             generics: sig.generics,
             fields_names: f_names,
@@ -118,7 +165,6 @@ fn derive_async_command(ops: &OperationIronStruct) -> TokenStream {
     let pats_types = &ops.pats_types;
     let s_name = &ops.s_name;
     let gen_params = &ops.generics.params;
-    let ret_type = &ops.ret_type;
     let (_, _, where_clause) = ops.split_gen_for_impl();
     let vars = pats_types.iter().map(|p| {
         let name = &p.pat;
@@ -131,7 +177,8 @@ fn derive_async_command(ops: &OperationIronStruct) -> TokenStream {
             quote! { let #name = self.#name.take().unwrap() } // consume from Option
         }
     });
-    let execute_body = if is_type_result(ret_type) {
+
+    let execute_body = if ops.is_result {
         quote! {
                 #(#vars;)*
                 let fire = async {#fn_body};
@@ -150,6 +197,28 @@ fn derive_async_command(ops: &OperationIronStruct) -> TokenStream {
                 self.result=::core::option::Option::Some(fire.await);
         }
     };
+    let rollback_execution = quote! {
+        match rcmd {
+             ::ironsaga::CommandKind::SyncCmd(cmd)=> cmd.execute(),
+             ::ironsaga::CommandKind::AsyncCmd(cmd)=> cmd.execute().await,
+         }
+    };
+    let rollback_body = if ops.recursive_rollback {
+        quote! {
+            let rollback_res= #rollback_execution;
+            if let ::std::result::Result::Err(e) = rollback_res{
+                _ = match rcmd {
+                     ::ironsaga::CommandKind::SyncCmd(cmd)=> cmd.rollback(),
+                     ::ironsaga::CommandKind::AsyncCmd(cmd)=> cmd.rollback().await,
+                 };
+                 return ::std::result::Result::Err(e);
+            }
+        }
+    } else {
+        quote! {
+            #rollback_execution?;
+        }
+    };
     quote! {
         #[::ironsaga::async_trait::async_trait]
         impl <'__ironcmd,#gen_params> ::ironsaga::AsyncCommand for #s_name <'__ironcmd,#gen_params> #where_clause{
@@ -158,16 +227,13 @@ fn derive_async_command(ops: &OperationIronStruct) -> TokenStream {
                     return ::std::result::Result::Ok(());
                 }
                 #execute_body
-                Ok(())
+                ::std::result::Result::Ok(())
             }
             async fn rollback(&mut self)->::ironsaga::anyhow::Result<()>{
                 if let ::core::option::Option::Some(rcmd)= self.rollback_cmd.as_mut(){
-                    match rcmd {
-                        ::ironsaga::CommandKind::SyncCmd(cmd)=> cmd.execute(),
-                        ::ironsaga::CommandKind::AsyncCmd(cmd)=> cmd.execute().await,
-                    }?;
+                        #rollback_body
                 }
-                Ok(())
+                ::std::result::Result::Ok(())
             }
 
         }
@@ -176,12 +242,10 @@ fn derive_async_command(ops: &OperationIronStruct) -> TokenStream {
 }
 
 fn derive_sync_command(ops: &OperationIronStruct) -> TokenStream {
-    use core::option::Option::*;
     let fn_body = &ops.fn_body;
     let pats_types = &ops.pats_types;
     let s_name = &ops.s_name;
     let gen_params = &ops.generics.params;
-    let ret_type = &ops.ret_type;
     let (_, _, where_clause) = ops.split_gen_for_impl();
     let vars = pats_types.iter().map(|p| {
         let name = &p.pat;
@@ -195,7 +259,7 @@ fn derive_sync_command(ops: &OperationIronStruct) -> TokenStream {
         }
     });
 
-    let execute_body = if is_type_result(ret_type) {
+    let execute_body = if ops.is_result {
         quote! {
              #(#vars;)*
              let fire ={#fn_body};
@@ -214,6 +278,19 @@ fn derive_sync_command(ops: &OperationIronStruct) -> TokenStream {
             self.result=::core::option::Option::Some(fire);
         }
     };
+    let rollback_body = if ops.recursive_rollback {
+        quote! {
+            let rollback_res = r.execute();
+            if let ::std::result::Result::Err(e)=rollback_res{
+               _ = r.rollback();
+                return ::std::result::Result::Err(e);
+            }
+        }
+    } else {
+        quote! {
+            let rollback_res = r.execute()?;
+        }
+    };
     quote! {
         impl <'__ironcmd,#gen_params> ::ironsaga::SyncCommand for #s_name <'__ironcmd,#gen_params> #where_clause{
              fn execute(&mut self)->::ironsaga::anyhow::Result<()>{
@@ -221,14 +298,13 @@ fn derive_sync_command(ops: &OperationIronStruct) -> TokenStream {
                      return ::std::result::Result::Ok(());
                  }
                  #execute_body
-                 Ok(())
+                 ::std::result::Result::Ok(())
              }
             fn rollback(&mut self) -> ::ironsaga::anyhow::Result<()> {
-                self.rollback_cmd
-                    .as_mut()
-                    .map(|cmd| cmd.execute())
-                    .transpose()
-                    .map(|_| ())   // ✅ Result<Option<()>> → Result<()>
+                if let ::core::option::Option::Some(r)=self.rollback_cmd.as_mut(){
+                    #rollback_body
+                }
+                ::std::result::Result::Ok(())
             }
         }
 
@@ -237,24 +313,33 @@ fn derive_sync_command(ops: &OperationIronStruct) -> TokenStream {
 
 fn impl_cmd(ops: &OperationIronStruct) -> TokenStream {
     let f_names = &ops.fields_names;
+    let wrapped_fields = ops.pats_types.iter().map(|p| {
+        let name = &p.pat;
+        if is_type_a_ref(&p.ty) {
+            quote! {#name}
+        } else {
+            quote! {#name: ::core::option::Option::Some(#name)}
+        }
+    });
     let f_types = &ops.fields_types;
     let vis = &ops.vis;
     let s_name = &ops.s_name;
     let ret_type = &ops.ret_type;
     let gen_params = &ops.generics.params;
     let (_, _, where_clause) = ops.split_gen_for_impl();
+
     let roll_method = if ops.is_async {
         quote! {
-            #vis fn set_rollback_async_cmd<'__ironcmdback:'__ironcmd>(&mut self,rollback: impl ::ironsaga::AsyncCommand + '__ironcmdback){
+            #vis fn set_async_rollback(&mut self,rollback: impl ::ironsaga::AsyncCommand + '__ironcmd){
                 self.rollback_cmd= ::core::option::Option::Some(::ironsaga::CommandKind::AsyncCmd(::std::boxed::Box::new(rollback)));
             }
-            #vis fn set_rollback_sync_cmd<'__ironcmdback:'__ironcmd>(&mut self,rollback: impl ::ironsaga::SyncCommand + '__ironcmdback){
+            #vis fn set_sync_rollback(&mut self,rollback: impl ::ironsaga::SyncCommand + '__ironcmd){
                 self.rollback_cmd= ::core::option::Option::Some(::ironsaga::CommandKind::SyncCmd(::std::boxed::Box::new(rollback)));
             }
         }
     } else {
         quote! {
-            #vis fn set_rollback_cmd<'__ironcmdback:'__ironcmd>(&mut self,rollback: impl ::ironsaga::SyncCommand + '__ironcmdback){
+            #vis fn set_rollback(&mut self,rollback: impl ::ironsaga::SyncCommand + '__ironcmd){
                 self.rollback_cmd= ::core::option::Option::Some(::std::boxed::Box::new(rollback));
             }
         }
@@ -263,15 +348,15 @@ fn impl_cmd(ops: &OperationIronStruct) -> TokenStream {
         impl <'__ironcmd,#gen_params> #s_name <'__ironcmd,#gen_params> #where_clause {
             #vis fn new(#(#f_names:#f_types,)*)->Self{
                 Self{
-                    #(#f_names,)*
+                    #(#wrapped_fields,)*
                     result: ::core::option::Option::None,
                     rollback_cmd: ::core::option::Option::None,
                 }
             }
-            #vis fn get_result_ref(&self)->::core::option::Option<&#ret_type>{
+            #vis fn result(&self)->::core::option::Option<&#ret_type>{
                 self.result.as_ref()
             }
-            #vis fn get_result_owned(&mut self)-> ::core::option::Option<#ret_type>{
+            #vis fn take_result(&mut self)-> ::core::option::Option<#ret_type>{
                 self.result.take()
             }
             #roll_method
@@ -310,15 +395,5 @@ fn is_type_a_mut_ref(ty: &Type) -> bool {
     if let Type::Reference(r) = ty {
         return r.mutability.is_some();
     }
-    false
-}
-
-fn is_type_result(ty: &Type) -> bool {
-    if let Type::Path(tp) = ty
-        && let Some(seg) = tp.path.segments.last()
-    {
-        return seg.ident == "Result";
-    }
-
     false
 }
