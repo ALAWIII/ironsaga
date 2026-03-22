@@ -17,7 +17,7 @@
  - ✅ Mix sync and async commands freely in one pipeline
 
 
- check out [examples](https://github.com/ALAWIII/ironsaga/examples/) folder for sync/async full examples.
+ check out [examples](https://github.com/ALAWIII/ironsaga/tree/main/examples/src) folder for sync/async full examples.
  ### Quick Start
 
  ```toml
