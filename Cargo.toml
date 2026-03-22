@@ -1,0 +1,3 @@
+[workspace]
+members = ["ironsaga", "ironsaga-macros", "tests"]
+resolver = "3"
