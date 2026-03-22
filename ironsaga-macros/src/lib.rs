@@ -389,7 +389,7 @@ fn derive_async_command(ops: &OperationIronStruct) -> TokenStream {
     };
 
     quote! {
-        #[::ironsaga::async_trait::async_trait]
+        #[::ironsaga::async_trait::async_trait(?Send)]
         impl<'__ironcmd, #gen_params> ::ironsaga::AsyncCommand
             for #s_name<'__ironcmd, #gen_params> #where_clause
         {
