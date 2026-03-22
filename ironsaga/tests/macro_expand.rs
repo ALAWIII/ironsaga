@@ -1,6 +1,8 @@
 #[test]
 fn expansion_tests() {
-    macrotest::expand("tests/expand/*.rs");
-    // or for CI, use:
-    // macrotest::expand_without_refresh("tests/expand/*.rs");
+    if std::env::var("CI").is_ok() {
+        macrotest::expand_without_refresh("tests/expand/*.rs");
+    } else {
+        macrotest::expand("tests/expand/*.rs");
+    }
 }
