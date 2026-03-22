@@ -14,11 +14,10 @@ pub enum CommandKind<'a> {
     AsyncCmd(Box<dyn AsyncCommand + 'a>),
     SyncCmd(Box<dyn SyncCommand + 'a>),
 }
-pub struct IronSagaAsync<'a, T> {
+pub struct IronSagaAsync<'a> {
     commands: Vec<CommandKind<'a>>,
-    context: Option<T>,
 }
-impl<'a, T> IronSagaAsync<'a, T> {
+impl<'a> IronSagaAsync<'a> {
     pub async fn execute_all(&mut self) -> anyhow::Result<()> {
         for (i, v) in self.commands.iter_mut().enumerate() {
             let r = match v {
@@ -51,11 +50,10 @@ impl<'a, T> IronSagaAsync<'a, T> {
     }
 }
 
-pub struct IronSagaSync<'a, T> {
+pub struct IronSagaSync<'a> {
     commands: Vec<Box<dyn SyncCommand + 'a>>,
-    context: Option<T>,
 }
-impl<'a, T> IronSagaSync<'a, T> {
+impl<'a> IronSagaSync<'a> {
     pub fn execute_all(&mut self) -> anyhow::Result<()> {
         for (i, v) in self.commands.iter_mut().enumerate() {
             let r = v.execute();
