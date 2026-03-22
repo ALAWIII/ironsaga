@@ -1,7 +1,7 @@
 pub use anyhow;
-use async_trait::async_trait;
+pub use async_trait;
 pub use ironsaga_macros::ironcmd;
-#[async_trait]
+#[async_trait::async_trait(?Send)]
 pub trait AsyncCommand {
     async fn execute(&mut self) -> anyhow::Result<()>;
     async fn rollback(&mut self) -> anyhow::Result<()>;
