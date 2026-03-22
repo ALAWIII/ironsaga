@@ -13,7 +13,7 @@ keywords = ["saga", "command", "pipeline", "rollback", "async"]
 categories = ["asynchronous", "rust-patterns"]
 
 [dependencies]
-ironsaga-macros = { path = "../ironsaga-macros" }
+ironsaga-macros = { path = "../ironsaga-macros", version = "0.1.0" }
 async-trait = "0.1"
 anyhow = "1"
 
