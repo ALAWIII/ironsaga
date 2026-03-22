@@ -1,0 +1,5 @@
+error: duplicate argument `rename`
+ --> tests/compile_fail/duplicate_rename.rs:3:27
+  |
+3 | #[ironcmd(rename = "Foo", rename = "Bar")]
+  |                           ^^^^^^

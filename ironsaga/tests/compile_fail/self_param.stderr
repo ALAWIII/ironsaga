@@ -1,0 +1,5 @@
+error: `self` is not supported in #[ironcmd] functions
+ --> tests/compile_fail/self_param.rs:6:16
+  |
+6 |     fn execute(self, x: u32) -> u32 {
+  |                ^^^^

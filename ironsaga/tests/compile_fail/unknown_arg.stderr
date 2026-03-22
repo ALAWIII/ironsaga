@@ -1,0 +1,5 @@
+error: unknown ironcmd argument `foobar`
+ --> tests/compile_fail/unknown_arg.rs:3:11
+  |
+3 | #[ironcmd(foobar)]
+  |           ^^^^^^

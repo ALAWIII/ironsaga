@@ -1,0 +1,5 @@
+error: duplicate argument `result`
+ --> tests/compile_fail/duplicate_result.rs:3:19
+  |
+3 | #[ironcmd(result, result)]
+  |                   ^^^^^^

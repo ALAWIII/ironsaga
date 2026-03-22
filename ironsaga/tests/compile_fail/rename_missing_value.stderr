@@ -1,0 +1,7 @@
+error: expected `=`
+ --> tests/compile_fail/rename_missing_value.rs:3:1
+  |
+3 | #[ironcmd(rename)]
+  | ^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `ironcmd` (in Nightly builds, run with -Z macro-backtrace for more info)
