@@ -7,3 +7,8 @@ edition = "2024"
 ironsaga-macros = { path = "../ironsaga-macros" }
 async-trait = "0.1"
 anyhow = "1"
+
+
+[dev-dependencies]
+macrotest = "1.2.1"
+trybuild = "1.0.116"
