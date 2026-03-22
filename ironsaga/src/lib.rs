@@ -1,117 +1,124 @@
-pub use anyhow;
-pub use async_trait;
-pub use ironsaga_macros::ironcmd;
+//! # ironsaga
+//!
+//! A Rust crate for building command pipelines with automatic compensation (rollback) support — for both sync and async workflows.
+//!
+//! You define plain functions, `#[ironcmd]` turns them into commands, and `IronSagaSync` / `IronSagaAsync` orchestrates their execution and rollback.
+//!
+//!
+//! ## Why ironsaga?
+//!
+//! When you have a sequence of operations that must either **all succeed or all undo themselves**, manually wiring rollback logic is tedious and error-prone. ironsaga gives you:
+//!
+//! - ✅ Declarative command definition via `#[ironcmd]`
+//! - ✅ Automatic LIFO rollback on failure
+//! - ✅ Recursive compensation chains
+//! - ✅ Shared typed context across commands
+//! - ✅ Mix sync and async commands freely in one pipeline
+//!
+//!
+//! check out [examples](https://github.com/ALAWIII/ironsaga/examples/) folder for sync/async full examples.
+//! ## Quick Start
+//!
+//! ```toml
+//! [dependencies]
+//! ironsaga = "0.1"
+//! ```
+//!
+//!
+//! ## Defining Commands
+//!
+//! ```rust
+//! use ironsaga::ironcmd;
+//!
+//! #[ironcmd]
+//! pub fn greet(fname: String, lname: String) -> String {
+//!     format!("Hello {} {}!", fname, lname)
+//! }
+//!
+//! let mut cmd = Greet::new("John".into(), "Doe".into());
+//! cmd.execute().unwrap();
+//! assert_eq!(cmd.result(), Some("Hello John Doe!".into()));
+//! ```
+//!
+//! The macro generates a `Greet` struct with `fname`, `lname` fields, implementing `SyncCommand`.
+//!
+//!
+//! ## Macro Attributes
+//!
+//! | Attribute            | Effect                                                            |
+//! |----------------------|-------------------------------------------------------------------|
+//! | `result`             | if your function returns a result (failable) then its better to annotate it , this helps the macro to extend the execute trait implemetation so that it can run rollback             |
+//! | `rename = "CustomStructName"`    | Override the default PascalCase generated struct name             |
+//! | `recursive_rollback` | On rollback failure, recursively tries `rollback_cmd.rollback()` |
+//!
+//!
+//! ## Shared Context
+//!
+//! Pass an `Rc<RefCell<YourContext>>` to share state and collect results across commands:
+//!
+//! ```rust
+//! #[derive(Default)]
+//! pub struct OrderContext {
+//!     pub order_id: Option<u64>,
+//!     pub rollback_log: Vec<String>,
+//! }
+//!
+//! #[ironcmd(result, rename = "CreateOrder")]
+//! pub fn create_order(id: u64, ctx: Rc<RefCell<OrderContext>>) -> anyhow::Result<u64> {
+//!     ctx.borrow_mut().order_id = Some(id);
+//!     Ok(id)
+//! }
+//! ```
+//!
+//!
+//! ## Rollback & Compensation
+//!
+//! Rollbacks are also commands — inject them with `set_rollback`:
+//!
+//! ```rust
+//! let mut create = CreateOrder::new(1001, ctx.clone());
+//! create.set_rollback(CancelOrder::new(1001, ctx.clone()));
+//! ```
+//!
+//! If the pipeline fails at step N, all previous commands roll back in **reverse order**. If a rollback itself fails and `recursive_rollback` is set, it tries `rollback_cmd.rollback()` recursively until the chain is exhausted.
+//!
+//!
+//! ## Sync Pipeline
+//!
+//! ```rust
+//! let mut saga = IronSagaSync::default();
+//! saga.add_sync_command(create);
+//! saga.add_sync_command(charge);
+//! saga.add_sync_command(ship); // 💥 fails → charge and create roll back
+//!
+//! assert!(saga.execute_all().is_err());
+//! assert_eq!(ctx.borrow().rollback_log, "payment refunded");
+//! assert_eq!(ctx.borrow().rollback_log, "order cancelled");[1]
+//! ```
+//!
+//!
+//! ## Async Pipeline
+//!
+//! `IronSagaAsync` accepts both sync and async commands freely:
+//!
+//! ```rust
+//! let mut bus = IronSagaAsync::default();
+//!
+//! let mut user_insertion = InsertUser::new(fname, lname, ctx.clone());
+//! user_insertion.set_rollback_async(RemoveUserDb::new(ctx.clone()));
+//!
+//! bus.add_async_command(user_insertion);        // async
+//! bus.add_sync_command(AddBonusSalary::new(…)); // sync — mixed freely
+//! bus.add_async_command(AddUserRedis::new(ctx.clone()));
+//!
+//! assert!(bus.execute_all().await.is_err());
+//! assert!(ctx.borrow().removed_user); // rollback ran ✅
+//! ```
+//!
+//! ## Full Example
+//!```no_run
+#![doc=include_str!("../../examples/src/sync_example.rs")]
+//! ```
 
-#[async_trait::async_trait(?Send)]
-pub trait AsyncCommand {
-    async fn execute(&mut self) -> anyhow::Result<()>;
-    async fn rollback(&mut self) -> anyhow::Result<()>;
-}
-pub trait SyncCommand {
-    fn execute(&mut self) -> anyhow::Result<()>;
-    fn rollback(&mut self) -> anyhow::Result<()>;
-}
-
-pub enum CommandKind<'a> {
-    AsyncCmd(Box<dyn AsyncCommand + 'a>),
-    SyncCmd(Box<dyn SyncCommand + 'a>),
-}
-impl<'a: 'static> CommandKind<'a> {
-    pub fn inner_sync(&self) -> Option<&dyn SyncCommand> {
-        if let CommandKind::SyncCmd(v) = self {
-            return Some(v.as_ref());
-        }
-        None
-    }
-    pub fn inner_async(&self) -> Option<&dyn AsyncCommand> {
-        if let CommandKind::AsyncCmd(v) = self {
-            return Some(v.as_ref());
-        }
-        None
-    }
-    pub fn inner_sync_mut(&mut self) -> Option<&dyn SyncCommand> {
-        if let CommandKind::SyncCmd(v) = self {
-            return Some(v.as_mut());
-        }
-        None
-    }
-    pub fn inner_async_mut(&mut self) -> Option<&dyn AsyncCommand> {
-        if let CommandKind::AsyncCmd(v) = self {
-            return Some(v.as_mut());
-        }
-        None
-    }
-}
-#[derive(Default)]
-pub struct IronSagaAsync<'a> {
-    commands: Vec<CommandKind<'a>>,
-}
-impl<'a> IronSagaAsync<'a> {
-    pub async fn execute_all(&mut self) -> anyhow::Result<()> {
-        for (i, v) in self.commands.iter_mut().enumerate() {
-            let r = match v {
-                CommandKind::AsyncCmd(c) => c.execute().await,
-                CommandKind::SyncCmd(c) => c.execute(),
-            };
-            if let Err(er) = r {
-                self.rollback_all(i).await?;
-                return Err(er);
-            }
-        }
-        Ok(())
-    }
-    async fn rollback_all(&mut self, index: usize) -> anyhow::Result<()> {
-        for i in (0..index).rev() {
-            match self.commands.get_mut(i).unwrap() {
-                CommandKind::AsyncCmd(c) => c.rollback().await,
-                CommandKind::SyncCmd(c) => c.rollback(),
-            }?;
-        }
-        Ok(())
-    }
-    pub fn add_async_command(&mut self, c: impl AsyncCommand + 'a) {
-        let ac = CommandKind::AsyncCmd(Box::new(c));
-        self.commands.push(ac);
-    }
-    pub fn add_sync_command(&mut self, c: impl SyncCommand + 'a) {
-        let ac = CommandKind::SyncCmd(Box::new(c));
-        self.commands.push(ac);
-    }
-    pub fn commands(&self) -> &[CommandKind<'a>] {
-        &self.commands
-    }
-    pub fn commands_mut(&mut self) -> &mut [CommandKind<'a>] {
-        &mut self.commands
-    }
-}
-#[derive(Default)]
-pub struct IronSagaSync<'a> {
-    commands: Vec<Box<dyn SyncCommand + 'a>>,
-}
-impl<'a> IronSagaSync<'a> {
-    pub fn execute_all(&mut self) -> anyhow::Result<()> {
-        for (i, v) in self.commands.iter_mut().enumerate() {
-            let r = v.execute();
-            if let Err(er) = r {
-                self.rollback_all(i)?;
-                return Err(er);
-            }
-        }
-        Ok(())
-    }
-    fn rollback_all(&mut self, index: usize) -> anyhow::Result<()> {
-        for i in (0..index).rev() {
-            self.commands.get_mut(i).unwrap().rollback()?;
-        }
-        Ok(())
-    }
-    pub fn add_sync_command(&mut self, c: impl SyncCommand + 'a) {
-        self.commands.push(Box::new(c));
-    }
-    pub fn commands(&self) -> &[Box<dyn SyncCommand + 'a>] {
-        &self.commands
-    }
-    pub fn commands_mut(&mut self) -> &mut [Box<dyn SyncCommand + 'a>] {
-        &mut self.commands
-    }
-}
+mod core;
+pub use core::*;
