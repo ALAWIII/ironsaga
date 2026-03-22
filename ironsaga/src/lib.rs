@@ -117,7 +117,7 @@
 //!
 //! ## Full Example
 //!```no_run
-#![doc=include_str!("../../examples/src/sync_example.rs")]
+#![doc=include_str!("../crate_io_example/sync_example.rs")]
 //! ```
 
 mod core;
