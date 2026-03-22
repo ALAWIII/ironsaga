@@ -12,14 +12,16 @@ use syn::{
 
 #[proc_macro_attribute]
 pub fn ironcmd(args: TS1, func: TS1) -> TS1 {
+    // parses the optional provided arguments.
     let args = parse_macro_input!(args as IronCmdArgs);
+    // parses the input function.
     let func = parse_macro_input!(func as ItemFn);
-
+    // constructing the new operation.
     let ops = match OperationIronStruct::new(func, args) {
         Ok(ops) => ops,
         Err(e) => return e.to_compile_error().into(),
     };
-
+    // builds the struct.
     if ops.is_async {
         build_async_cmd(&ops)
     } else {
@@ -41,18 +43,20 @@ impl Parse for IronCmdArgs {
         let mut is_result = false;
         let mut recursive_rollback = false;
         let mut rename: Option<String> = None;
-
+        // iterating over all provided parameters.
         while !input.is_empty() {
             let ident: Ident = input.parse()?;
             match ident.to_string().as_str() {
                 "result" => {
                     if is_result {
+                        // check for duplication
                         return Err(syn::Error::new(ident.span(), "duplicate argument `result`"));
                     }
                     is_result = true;
                 }
                 "recursive_rollback" => {
                     if recursive_rollback {
+                        // check for duplication
                         return Err(syn::Error::new(
                             ident.span(),
                             "duplicate argument `recursive_rollback`",
@@ -62,12 +66,14 @@ impl Parse for IronCmdArgs {
                 }
                 "rename" => {
                     if rename.is_some() {
+                        // check for arguments duplication.
                         return Err(syn::Error::new(ident.span(), "duplicate argument `rename`"));
                     }
-                    input.parse::<Token![=]>()?;
+                    input.parse::<Token![=]>()?; // must provide equal `=` : rename= "MyStruct"
                     rename = Some(input.parse::<LitStr>()?.value());
                 }
                 unknown => {
+                    // if unknown argument were provided.
                     return Err(syn::Error::new(
                         ident.span(),
                         format!("unknown ironcmd argument `{unknown}`"),
@@ -75,6 +81,7 @@ impl Parse for IronCmdArgs {
                 }
             }
             if input.peek(Token![,]) {
+                // parses comma
                 input.parse::<Token![,]>()?;
             }
         }
@@ -105,8 +112,9 @@ struct OperationIronStruct {
 
 impl OperationIronStruct {
     pub fn new(func: ItemFn, args: IronCmdArgs) -> syn::Result<Self> {
+        // get the function signature.
         let sig = func.sig;
-
+        // collecting all parameter fields of the function into vec.
         let mut pats_types = Vec::new();
         for arg in sig.inputs {
             match arg {
@@ -126,17 +134,19 @@ impl OperationIronStruct {
             .map(|p| {
                 let mut pat = (*p.pat).clone();
                 if let Pat::Ident(ref mut pi) = pat {
+                    // in case if the parameter were mut (e.g: mut user:User )
                     pi.mutability = None;
                 }
                 (pat, (*p.ty).clone())
             })
             .unzip();
 
+        // getting the return type of a function.
         let ret_type = match sig.output {
             ReturnType::Type(_, ty) => *ty,
             ReturnType::Default => parse_quote!(()),
         };
-
+        // getting the provided name if exists, otherwise generate the default.
         let name_str = args
             .rename
             .unwrap_or_else(|| sig.ident.to_string().to_pascal_case());
@@ -156,16 +166,17 @@ impl OperationIronStruct {
             is_async: sig.asyncness.is_some(),
         })
     }
-
+    /// used when needed to generate an implementation for the structs
     fn split_for_impl(&self) -> (ImplGenerics<'_>, TypeGenerics<'_>, Option<&WhereClause>) {
         self.generics.split_for_impl()
     }
 }
 
 // ─── Struct Generation ────────────────────────────────────────────────────────
-
+/// general function used to generate the struct.
 fn generate_struct(ops: &OperationIronStruct, rollback_type: TokenStream) -> TokenStream {
     let field_types = ops.field_types.iter().map(|t| {
+        // wrapping the owned type with Option to be consumed later.
         if is_type_a_ref(t) {
             quote! { #t }
         } else {
@@ -191,11 +202,11 @@ fn generate_struct(ops: &OperationIronStruct, rollback_type: TokenStream) -> Tok
         }
     }
 }
-
+/// generate async struct.
 fn generate_async_struct(ops: &OperationIronStruct) -> TokenStream {
     generate_struct(ops, quote! { ::ironsaga::CommandKind<'__ironcmd> })
 }
-
+/// generate sync struct.
 fn generate_sync_struct(ops: &OperationIronStruct) -> TokenStream {
     generate_struct(
         ops,
@@ -204,7 +215,7 @@ fn generate_sync_struct(ops: &OperationIronStruct) -> TokenStream {
 }
 
 // ─── Impl Block ───────────────────────────────────────────────────────────────
-
+/// generates an implementation for the `new` and `result` functionalities.
 fn impl_cmd(ops: &OperationIronStruct) -> TokenStream {
     let OperationIronStruct {
         vis,
@@ -229,16 +240,20 @@ fn impl_cmd(ops: &OperationIronStruct) -> TokenStream {
         let ty = &p.ty;
         let mut stripped = (*p.pat).clone();
         if let Pat::Ident(ref mut pi) = stripped {
+            // removing the mut keyword to that may comes with the parameters in the function signature: mut user: User.
+            // used to define the constructor fields Self{}
             pi.mutability = None;
         }
         if is_type_a_ref(ty) {
             quote! { #stripped: #stripped }
         } else {
+            // define the constructor field name :  mut pool
             quote! { #stripped: ::core::option::Option::Some(#stripped) }
         }
     });
 
     let rollback_setter = if ops.is_async {
+        // if the function was an async then it must add the appropriate async rollback functionalities.
         quote! {
             #vis fn set_rollback_async(&mut self, rollback: impl ::ironsaga::AsyncCommand + '__ironcmd) {
                 self.rollback_cmd = ::core::option::Option::Some(
@@ -258,7 +273,7 @@ fn impl_cmd(ops: &OperationIronStruct) -> TokenStream {
             }
         }
     };
-
+    // generate the appropriate methods for structs.
     quote! {
         impl<'__ironcmd, #gen_params> #s_name<'__ironcmd, #gen_params> #where_clause {
             #vis fn new(#(#fn_args,)*) -> Self {
@@ -283,7 +298,7 @@ fn impl_cmd(ops: &OperationIronStruct) -> TokenStream {
 }
 
 // ─── Shared Execute Body ──────────────────────────────────────────────────────
-
+/// responsible for generating the required variables inside the function block. let mut shawarma = "flafel";
 fn build_vars(pats_types: &[PatType]) -> impl Iterator<Item = TokenStream> + '_ {
     pats_types.iter().map(|p| {
         let ty = &p.ty;
@@ -301,7 +316,7 @@ fn build_vars(pats_types: &[PatType]) -> impl Iterator<Item = TokenStream> + '_ 
         }
     })
 }
-
+/// builds sync/async execute body for the trait implementations.
 fn build_execute_body(ops: &OperationIronStruct, is_async: bool) -> TokenStream {
     let fn_body = &ops.fn_body;
     let vars = build_vars(&ops.pats_types);
@@ -317,7 +332,7 @@ fn build_execute_body(ops: &OperationIronStruct, is_async: bool) -> TokenStream 
             self.result = ::core::option::Option::Some(fire);
         }
     };
-
+    // if it returns a Result , then there is a chance for failables.
     let result_check = if ops.is_result {
         quote! {
             self.result
@@ -339,13 +354,13 @@ fn build_execute_body(ops: &OperationIronStruct, is_async: bool) -> TokenStream 
 }
 
 // ─── Trait Impls ──────────────────────────────────────────────────────────────
-
+/// responsible for deriving the AsyncCommand for the struct.
 fn derive_async_command(ops: &OperationIronStruct) -> TokenStream {
     let s_name = &ops.s_name;
     let gen_params = &ops.generics.params;
     let (_, _, where_clause) = ops.split_for_impl();
     let exec_body = build_execute_body(ops, true);
-
+    // if the recursive_rollback is true.
     let rollback_body = if ops.recursive_rollback {
         quote! {
             if let ::core::option::Option::Some(rcmd) = self.rollback_cmd.as_mut() {
@@ -393,7 +408,7 @@ fn derive_async_command(ops: &OperationIronStruct) -> TokenStream {
         }
     }
 }
-
+/// responsible for deriving the SyncCommand for the struct.
 fn derive_sync_command(ops: &OperationIronStruct) -> TokenStream {
     let s_name = &ops.s_name;
     let gen_params = &ops.generics.params;
@@ -439,14 +454,14 @@ fn derive_sync_command(ops: &OperationIronStruct) -> TokenStream {
 }
 
 // ─── Builders ─────────────────────────────────────────────────────────────────
-
+/// a single function that takes care of the async generations.
 fn build_async_cmd(ops: &OperationIronStruct) -> TokenStream {
     let s = generate_async_struct(ops);
     let i = impl_cmd(ops);
     let t = derive_async_command(ops);
     quote! { #s #i #t }
 }
-
+/// a single function that takes care of the sync generations.
 fn build_sync_cmd(ops: &OperationIronStruct) -> TokenStream {
     let s = generate_sync_struct(ops);
     let i = impl_cmd(ops);
@@ -455,11 +470,11 @@ fn build_sync_cmd(ops: &OperationIronStruct) -> TokenStream {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
+// checks if the function is &x or &mut x.
 fn is_type_a_ref(ty: &Type) -> bool {
     matches!(ty, Type::Reference(_))
 }
-
+// checks if the function is &mut x.
 fn is_type_a_mut_ref(ty: &Type) -> bool {
     matches!(ty, Type::Reference(r) if r.mutability.is_some())
 }
