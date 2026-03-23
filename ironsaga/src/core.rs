@@ -2,8 +2,8 @@ pub use anyhow;
 pub use async_trait;
 pub use ironsaga_macros::ironcmd;
 
-#[async_trait::async_trait(?Send)]
-pub trait AsyncCommand {
+#[async_trait::async_trait]
+pub trait AsyncCommand: Send {
     async fn execute(&mut self) -> anyhow::Result<()>;
     async fn rollback(&mut self) -> anyhow::Result<()>;
 }
@@ -12,47 +12,14 @@ pub trait SyncCommand {
     fn rollback(&mut self) -> anyhow::Result<()>;
 }
 
-pub enum CommandKind<'a> {
-    AsyncCmd(Box<dyn AsyncCommand + 'a>),
-    SyncCmd(Box<dyn SyncCommand + 'a>),
-}
-impl<'a: 'static> CommandKind<'a> {
-    pub fn inner_sync(&self) -> Option<&dyn SyncCommand> {
-        if let CommandKind::SyncCmd(v) = self {
-            return Some(v.as_ref());
-        }
-        None
-    }
-    pub fn inner_async(&self) -> Option<&dyn AsyncCommand> {
-        if let CommandKind::AsyncCmd(v) = self {
-            return Some(v.as_ref());
-        }
-        None
-    }
-    pub fn inner_sync_mut(&mut self) -> Option<&dyn SyncCommand> {
-        if let CommandKind::SyncCmd(v) = self {
-            return Some(v.as_mut());
-        }
-        None
-    }
-    pub fn inner_async_mut(&mut self) -> Option<&dyn AsyncCommand> {
-        if let CommandKind::AsyncCmd(v) = self {
-            return Some(v.as_mut());
-        }
-        None
-    }
-}
 #[derive(Default)]
 pub struct IronSagaAsync<'a> {
-    commands: Vec<CommandKind<'a>>,
+    commands: Vec<Box<dyn AsyncCommand + 'a>>,
 }
 impl<'a> IronSagaAsync<'a> {
     pub async fn execute_all(&mut self) -> anyhow::Result<()> {
-        for (i, v) in self.commands.iter_mut().enumerate() {
-            let r = match v {
-                CommandKind::AsyncCmd(c) => c.execute().await,
-                CommandKind::SyncCmd(c) => c.execute(),
-            };
+        for (i, c) in self.commands.iter_mut().enumerate() {
+            let r = c.execute().await;
             if let Err(er) = r {
                 self.rollback_all(i).await?;
                 return Err(er);
@@ -62,25 +29,17 @@ impl<'a> IronSagaAsync<'a> {
     }
     async fn rollback_all(&mut self, index: usize) -> anyhow::Result<()> {
         for i in (0..index).rev() {
-            match self.commands.get_mut(i).unwrap() {
-                CommandKind::AsyncCmd(c) => c.rollback().await,
-                CommandKind::SyncCmd(c) => c.rollback(),
-            }?;
+            self.commands.get_mut(i).unwrap().rollback().await?;
         }
         Ok(())
     }
-    pub fn add_async_command(&mut self, c: impl AsyncCommand + 'a) {
-        let ac = CommandKind::AsyncCmd(Box::new(c));
-        self.commands.push(ac);
+    pub fn add_command(&mut self, c: impl AsyncCommand + 'a) {
+        self.commands.push(Box::new(c));
     }
-    pub fn add_sync_command(&mut self, c: impl SyncCommand + 'a) {
-        let ac = CommandKind::SyncCmd(Box::new(c));
-        self.commands.push(ac);
-    }
-    pub fn commands(&self) -> &[CommandKind<'a>] {
+    pub fn commands(&self) -> &[Box<dyn AsyncCommand + 'a>] {
         &self.commands
     }
-    pub fn commands_mut(&mut self) -> &mut [CommandKind<'a>] {
+    pub fn commands_mut(&mut self) -> &mut [Box<dyn AsyncCommand + 'a>] {
         &mut self.commands
     }
 }
@@ -90,8 +49,8 @@ pub struct IronSagaSync<'a> {
 }
 impl<'a> IronSagaSync<'a> {
     pub fn execute_all(&mut self) -> anyhow::Result<()> {
-        for (i, v) in self.commands.iter_mut().enumerate() {
-            let r = v.execute();
+        for (i, c) in self.commands.iter_mut().enumerate() {
+            let r = c.execute();
             if let Err(er) = r {
                 self.rollback_all(i)?;
                 return Err(er);
@@ -105,7 +64,7 @@ impl<'a> IronSagaSync<'a> {
         }
         Ok(())
     }
-    pub fn add_sync_command(&mut self, c: impl SyncCommand + 'a) {
+    pub fn add_command(&mut self, c: impl SyncCommand + 'a) {
         self.commands.push(Box::new(c));
     }
     pub fn commands(&self) -> &[Box<dyn SyncCommand + 'a>] {
