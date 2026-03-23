@@ -2,7 +2,9 @@ use ironsaga::ironcmd;
 #[allow(dead_code)]
 struct FetchData<'__ironcmd> {
     url: ::core::option::Option<String>,
-    rollback_cmd: ::core::option::Option<::ironsaga::CommandKind<'__ironcmd>>,
+    rollback_cmd: ::core::option::Option<
+        ::std::boxed::Box<dyn ::ironsaga::AsyncCommand + '__ironcmd>,
+    >,
     result: ::core::option::Option<Vec<u8>>,
 }
 impl<'__ironcmd> FetchData<'__ironcmd> {
@@ -24,36 +26,95 @@ impl<'__ironcmd> FetchData<'__ironcmd> {
         rollback: impl ::ironsaga::AsyncCommand + '__ironcmd,
     ) {
         self.rollback_cmd = ::core::option::Option::Some(
-            ::ironsaga::CommandKind::AsyncCmd(::std::boxed::Box::new(rollback)),
-        );
-    }
-    fn set_rollback_sync(
-        &mut self,
-        rollback: impl ::ironsaga::SyncCommand + '__ironcmd,
-    ) {
-        self.rollback_cmd = ::core::option::Option::Some(
-            ::ironsaga::CommandKind::SyncCmd(::std::boxed::Box::new(rollback)),
+            ::std::boxed::Box::new(rollback),
         );
     }
 }
-#[::ironsaga::async_trait::async_trait]
 impl<'__ironcmd> ::ironsaga::AsyncCommand for FetchData<'__ironcmd> {
-    async fn execute(&mut self) -> ::ironsaga::anyhow::Result<()> {
-        if self.result.is_some() {
-            return ::std::result::Result::Ok(());
-        }
-        let url = self.url.take().unwrap();
-        let fire = async { { ::alloc::vec::Vec::new() } };
-        self.result = ::core::option::Option::Some(fire.await);
-        ::std::result::Result::Ok(())
+    #[allow(
+        elided_named_lifetimes,
+        clippy::async_yields_async,
+        clippy::diverging_sub_expression,
+        clippy::let_unit_value,
+        clippy::needless_arbitrary_self_type,
+        clippy::no_effect_underscore_binding,
+        clippy::shadow_same,
+        clippy::type_complexity,
+        clippy::type_repetition_in_bounds,
+        clippy::used_underscore_binding
+    )]
+    fn execute<'life0, 'async_trait>(
+        &'life0 mut self,
+    ) -> ::core::pin::Pin<
+        Box<
+            dyn ::core::future::Future<
+                Output = ::ironsaga::anyhow::Result<()>,
+            > + ::core::marker::Send + 'async_trait,
+        >,
+    >
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait,
+    {
+        Box::pin(async move {
+            if let ::core::option::Option::Some(__ret) = ::core::option::Option::None::<
+                ::ironsaga::anyhow::Result<()>,
+            > {
+                #[allow(unreachable_code)] return __ret;
+            }
+            let mut __self = self;
+            let __ret: ::ironsaga::anyhow::Result<()> = {
+                if __self.result.is_some() {
+                    return ::std::result::Result::Ok(());
+                }
+                let url = __self.url.take().unwrap();
+                let fire = async { { ::alloc::vec::Vec::new() } };
+                __self.result = ::core::option::Option::Some(fire.await);
+                ::std::result::Result::Ok(())
+            };
+            #[allow(unreachable_code)] __ret
+        })
     }
-    async fn rollback(&mut self) -> ::ironsaga::anyhow::Result<()> {
-        if let ::core::option::Option::Some(rcmd) = self.rollback_cmd.as_mut() {
-            match rcmd {
-                ::ironsaga::CommandKind::SyncCmd(cmd) => cmd.execute(),
-                ::ironsaga::CommandKind::AsyncCmd(cmd) => cmd.execute().await,
-            }?;
-        }
-        ::std::result::Result::Ok(())
+    #[allow(
+        elided_named_lifetimes,
+        clippy::async_yields_async,
+        clippy::diverging_sub_expression,
+        clippy::let_unit_value,
+        clippy::needless_arbitrary_self_type,
+        clippy::no_effect_underscore_binding,
+        clippy::shadow_same,
+        clippy::type_complexity,
+        clippy::type_repetition_in_bounds,
+        clippy::used_underscore_binding
+    )]
+    fn rollback<'life0, 'async_trait>(
+        &'life0 mut self,
+    ) -> ::core::pin::Pin<
+        Box<
+            dyn ::core::future::Future<
+                Output = ::ironsaga::anyhow::Result<()>,
+            > + ::core::marker::Send + 'async_trait,
+        >,
+    >
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait,
+    {
+        Box::pin(async move {
+            if let ::core::option::Option::Some(__ret) = ::core::option::Option::None::<
+                ::ironsaga::anyhow::Result<()>,
+            > {
+                #[allow(unreachable_code)] return __ret;
+            }
+            let mut __self = self;
+            let __ret: ::ironsaga::anyhow::Result<()> = {
+                if let ::core::option::Option::Some(rcmd) = __self.rollback_cmd.as_mut()
+                {
+                    rcmd.execute().await?;
+                }
+                ::std::result::Result::Ok(())
+            };
+            #[allow(unreachable_code)] __ret
+        })
     }
 }
