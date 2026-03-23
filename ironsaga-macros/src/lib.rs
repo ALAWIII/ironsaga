@@ -204,7 +204,10 @@ fn generate_struct(ops: &OperationIronStruct, rollback_type: TokenStream) -> Tok
 }
 /// generate async struct.
 fn generate_async_struct(ops: &OperationIronStruct) -> TokenStream {
-    generate_struct(ops, quote! { ::ironsaga::CommandKind<'__ironcmd> })
+    generate_struct(
+        ops,
+        quote! { ::std::boxed::Box<dyn ::ironsaga::AsyncCommand + '__ironcmd>},
+    )
 }
 /// generate sync struct.
 fn generate_sync_struct(ops: &OperationIronStruct) -> TokenStream {
@@ -256,14 +259,7 @@ fn impl_cmd(ops: &OperationIronStruct) -> TokenStream {
         // if the function was an async then it must add the appropriate async rollback functionalities.
         quote! {
             #vis fn set_rollback_async(&mut self, rollback: impl ::ironsaga::AsyncCommand + '__ironcmd) {
-                self.rollback_cmd = ::core::option::Option::Some(
-                    ::ironsaga::CommandKind::AsyncCmd(::std::boxed::Box::new(rollback))
-                );
-            }
-            #vis fn set_rollback_sync(&mut self, rollback: impl ::ironsaga::SyncCommand + '__ironcmd) {
-                self.rollback_cmd = ::core::option::Option::Some(
-                    ::ironsaga::CommandKind::SyncCmd(::std::boxed::Box::new(rollback))
-                );
+                self.rollback_cmd = ::core::option::Option::Some(::std::boxed::Box::new(rollback));
             }
         }
     } else {
@@ -364,15 +360,9 @@ fn derive_async_command(ops: &OperationIronStruct) -> TokenStream {
     let rollback_body = if ops.recursive_rollback {
         quote! {
             if let ::core::option::Option::Some(rcmd) = self.rollback_cmd.as_mut() {
-                let res = match rcmd {
-                    ::ironsaga::CommandKind::SyncCmd(cmd) => cmd.execute(),
-                    ::ironsaga::CommandKind::AsyncCmd(cmd) => cmd.execute().await,
-                };
+                let res = rcmd.execute().await;
                 if let ::std::result::Result::Err(e) = res {
-                    let _ = match rcmd {
-                        ::ironsaga::CommandKind::SyncCmd(cmd) => cmd.rollback(),
-                        ::ironsaga::CommandKind::AsyncCmd(cmd) => cmd.rollback().await,
-                    };
+                    let _ = rcmd.rollback().await;
                     return ::std::result::Result::Err(e);
                 }
             }
@@ -380,16 +370,13 @@ fn derive_async_command(ops: &OperationIronStruct) -> TokenStream {
     } else {
         quote! {
             if let ::core::option::Option::Some(rcmd) = self.rollback_cmd.as_mut() {
-                match rcmd {
-                    ::ironsaga::CommandKind::SyncCmd(cmd) => cmd.execute(),
-                    ::ironsaga::CommandKind::AsyncCmd(cmd) => cmd.execute().await,
-                }?;
+                rcmd.execute().await?;
             }
         }
     };
 
     quote! {
-        #[::ironsaga::async_trait::async_trait(?Send)]
+        #[::ironsaga::async_trait::async_trait]
         impl<'__ironcmd, #gen_params> ::ironsaga::AsyncCommand
             for #s_name<'__ironcmd, #gen_params> #where_clause
         {
