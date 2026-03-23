@@ -1,7 +1,7 @@
 [package]
 name = "ironsaga"
 edition = "2024"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["ALAWIII"]
 description = "Command pipeline orchestration with automatic LIFO rollback and recursive compensation, for sync and async Rust workflows."
 license = "MIT"
@@ -13,7 +13,7 @@ keywords = ["saga", "command", "pipeline", "rollback", "async"]
 categories = ["asynchronous", "rust-patterns"]
 
 [dependencies]
-ironsaga-macros = { path = "../ironsaga-macros", version = "0.1.0" }
+ironsaga-macros = { path = "../ironsaga-macros", version = "0.2.0" }
 async-trait = "0.1"
 anyhow = "1"
 

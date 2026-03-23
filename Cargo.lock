@@ -61,7 +61,7 @@ dependencies = [
 
 [[package]]
 name = "example"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ironsaga",
  "tokio",
@@ -103,7 +103,7 @@ dependencies = [
 
 [[package]]
 name = "ironsaga"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -114,7 +114,7 @@ dependencies = [
 
 [[package]]
 name = "ironsaga-macros"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "heck",
  "proc-macro2",
