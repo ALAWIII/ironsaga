@@ -258,7 +258,7 @@ fn impl_cmd(ops: &OperationIronStruct) -> TokenStream {
     let rollback_setter = if ops.is_async {
         // if the function was an async then it must add the appropriate async rollback functionalities.
         quote! {
-            #vis fn set_rollback_async(&mut self, rollback: impl ::ironsaga::AsyncCommand + '__ironcmd) {
+            #vis fn set_rollback(&mut self, rollback: impl ::ironsaga::AsyncCommand + '__ironcmd) {
                 self.rollback_cmd = ::core::option::Option::Some(::std::boxed::Box::new(rollback));
             }
         }
