@@ -14,7 +14,6 @@
  - ✅ Automatic LIFO rollback on failure
  - ✅ Recursive compensation chains
  - ✅ Shared typed context across commands
- - ✅ Mix sync and async commands freely in one pipeline
 
 
  check out [examples](https://github.com/ALAWIII/ironsaga/tree/main/examples/src) folder for sync/async full examples.
@@ -22,7 +21,7 @@
 
  ```toml
  [dependencies]
- ironsaga = "0.1"
+ ironsaga = "0.2"
  ```
 
 
@@ -55,7 +54,7 @@
 
  ### Shared Context
 
- Pass an `Rc<RefCell<YourContext>>` to share state and collect results across commands:
+ Pass an `Rc<RefCell<YourContext>>` for sync/ Arc<Mutex<YourContext>> for sync, to share state and collect results across commands:
 
  ```rust
  #[derive(Default)]
@@ -88,9 +87,9 @@
 
  ```rust
  let mut saga = IronSagaSync::default();
- saga.add_sync_command(create);
- saga.add_sync_command(charge);
- saga.add_sync_command(ship); // 💥 fails → charge and create roll back
+ saga.add_command(create);
+ saga.add_command(charge);
+ saga.add_command(ship); // 💥 fails → charge and create roll back
 
  assert!(saga.execute_all().is_err());
  assert_eq!(ctx.borrow().rollback_log, "payment refunded");
@@ -100,20 +99,20 @@
 
  ### Async Pipeline
 
- `IronSagaAsync` accepts both sync and async commands freely:
+ `IronSagaAsync` accepts only async commands, because of design limitation to make it Send:
 
  ```rust
  let mut bus = IronSagaAsync::default();
 
  let mut user_insertion = InsertUser::new(fname, lname, ctx.clone());
- user_insertion.set_rollback_async(RemoveUserDb::new(ctx.clone()));
+ user_insertion.set_rollback(RemoveUserDb::new(ctx.clone()));
 
- bus.add_async_command(user_insertion);        // async
- bus.add_sync_command(AddBonusSalary::new(…)); // sync — mixed freely
- bus.add_async_command(AddUserRedis::new(ctx.clone()));
+ bus.add_command(user_insertion);        // async
+ bus.add_command(AddBonusSalary::new(…)); // async
+ bus.add_command(AddUserRedis::new(ctx.clone()));
 
  assert!(bus.execute_all().await.is_err());
- assert!(ctx.borrow().removed_user); // rollback ran ✅
+ assert!(ctx.lock().unwrap().removed_user); // rollback ran ✅
  ```
 
  ### Full Example
@@ -189,9 +188,9 @@ pub fn sync_example() {
     let ship = ScheduleShipment::new(3003);
 
     let mut saga = IronSagaSync::default();
-    saga.add_sync_command(create);
-    saga.add_sync_command(charge);
-    saga.add_sync_command(ship);
+    saga.add_command(create);
+    saga.add_command(charge);
+    saga.add_command(ship);
 
     assert!(saga.execute_all().is_err());
 

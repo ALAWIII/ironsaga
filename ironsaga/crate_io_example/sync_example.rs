@@ -69,9 +69,9 @@ pub fn sync_example() {
     let ship = ScheduleShipment::new(3003);
 
     let mut saga = IronSagaSync::default();
-    saga.add_sync_command(create);
-    saga.add_sync_command(charge);
-    saga.add_sync_command(ship);
+    saga.add_command(create);
+    saga.add_command(charge);
+    saga.add_command(ship);
 
     assert!(saga.execute_all().is_err());
 
